@@ -10,12 +10,12 @@ sleep 5
 adb exec-out screencap -p > smoke_out/1_home.png
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
 adb pull /sdcard/ui.xml smoke_out/ui.xml >/dev/null 2>&1
-# enable the notification listener and start the service on a real video
+# SUBS mode end-to-end up to the point where a video must play
+cat ci/test.srt | adb shell "run-as com.livedub sh -c 'cat > files/subs.txt'"
 adb shell cmd notification allow_listener com.livedub/com.livedub.MediaWatcher | tee smoke_out/listener.txt
-adb shell am start-foreground-service -n com.livedub/.DubService --es video UF8uR6Z6KLc --es lang ar --ei duck 20 | tee smoke_out/service.txt
-sleep 60
+adb shell am start-foreground-service -n com.livedub/.DubService --es mode subs --es lang fr --ei duck 20 | tee smoke_out/service.txt
+sleep 75
 adb exec-out screencap -p > smoke_out/2_running.png
 adb logcat -d -s LiveDub:I AndroidRuntime:E ActivityManager:E > smoke_out/log.txt
 adb shell dumpsys activity services com.livedub > smoke_out/services.txt 2>&1
-adb shell dumpsys package com.livedub | grep -i "versionName\|targetSdk" > smoke_out/package.txt
 echo done

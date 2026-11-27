@@ -30,4 +30,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
     implementation("com.google.mlkit:translate:17.0.3")      // on-device translation
+    implementation("net.java.dev.jna:jna:5.13.0@aar")        // needed by Vosk
+    implementation("com.alphacephei:vosk-android:0.3.47")    // offline speech recognition
 }

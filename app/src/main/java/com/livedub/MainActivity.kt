@@ -1,23 +1,21 @@
 package com.livedub
 
 import android.Manifest
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
-import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -32,7 +30,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -45,17 +46,66 @@ class MainActivity : ComponentActivity() {
     private var langIndex = 0
     private var duck = 20
 
-    private lateinit var linkEt: EditText
     private lateinit var statusTv: TextView
     private lateinit var progress: ProgressBar
     private lateinit var originalTv: TextView
     private lateinit var dubbedTv: TextView
     private lateinit var startBtn: Button
     private lateinit var accessBtn: Button
+    private lateinit var modelBtn: Button
+    private lateinit var subsBtn: Button
+    private lateinit var subsClearBtn: Button
+    private lateinit var subsInfo: TextView
     private lateinit var offsetTv: TextView
 
-    private val notifPermLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { startDubbing() }
+    private fun subsFile() = File(filesDir, DubService.SUBS_FILE)
+    private fun hasSubs() = subsFile().exists()
+
+    private val pickSubs =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                val name = contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (c.moveToFirst() && i >= 0) c.getString(i) else null
+                } ?: "subtitles"
+                val text = withContext(Dispatchers.IO) {
+                    runCatching { contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
+                }
+                val cues = text?.let { SubtitleParser.parse(it) } ?: emptyList()
+                if (cues.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "Could not read subtitles from this file (use .srt or .vtt)", Toast.LENGTH_LONG).show()
+                } else {
+                    withContext(Dispatchers.IO) { subsFile().writeText(text!!) }
+                    prefs.edit().putString("subs_name", "$name · ${cues.size} sentences").apply()
+                    refreshState()
+                }
+            }
+        }
+
+    private val audioPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                projectionLauncher.launch(mpm.createScreenCaptureIntent())
+            } else Toast.makeText(this, "Microphone permission is needed to hear the video's audio", Toast.LENGTH_LONG).show()
+        }
+
+    private val projectionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+            val data = r.data
+            if (r.resultCode == RESULT_OK && data != null) {
+                startDub(Intent(this, DubService::class.java)
+                    .putExtra("mode", "audio").putExtra("code", r.resultCode).putExtra("data", data))
+            }
+        }
+
+    private val subsPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            startDub(Intent(this, DubService::class.java).putExtra("mode", "subs"))
+        }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -84,13 +134,12 @@ class MainActivity : ComponentActivity() {
         textSize = 15f
         minHeight = dp(48)
         setTextColor(if (primary) Color.WHITE else 0xFF1A73E8.toInt())
-        background = if (primary) rounded(0xFF1A73E8.toInt(), 12)
-        else GradientDrawable().apply {
-            setColor(0xFFE8F0FE.toInt()); cornerRadius = dp(12).toFloat()
-        }
+        background = rounded(if (primary) 0xFF1A73E8.toInt() else 0xFFE8F0FE.toInt(), 12)
         stateListAnimator = null
         setOnClickListener { onClick() }
     }
+
+    private fun gap() = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -106,24 +155,13 @@ class MainActivity : ComponentActivity() {
             text = "Live Dub"; textSize = 30f; typeface = Typeface.DEFAULT_BOLD; setTextColor(0xFF202124.toInt())
         })
         root.addView(TextView(this).apply {
-            text = "Speaks the video's subtitles in your language, in sync with playback."
+            text = "Speaks the video in your language while it plays (English speech in)."
             textSize = 14f; setTextColor(0xFF5F6368.toInt())
         })
 
-        // 1. Setup
-        val setup = card(root, "1 · SET UP")
-        accessBtn = button("", false) { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
-        setup.addView(accessBtn)
-        setup.addView(button("Check / install the voice for this language", false) { openVoiceSettings() },
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-
-        // 2. Video + language
-        val video = card(root, "2 · VIDEO AND LANGUAGE")
-        linkEt = EditText(this).apply {
-            hint = "Paste the YouTube link (or Share > Live Dub)"; setSingleLine(); textSize = 15f
-        }
-        video.addView(linkEt)
-        video.addView(Spinner(this).apply {
+        // 1. Language and voice
+        val lang = card(root, "1 · LANGUAGE")
+        lang.addView(Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, languages.map { it.first })
             setSelection(langIndex)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -133,9 +171,34 @@ class MainActivity : ComponentActivity() {
                 override fun onNothingSelected(p: AdapterView<*>?) {}
             }
         })
+        lang.addView(button("Check / install the voice for this language", false) { openVoiceSettings() }, gap())
 
-        // 3. Mix + sync
-        val mix = card(root, "3 · SOUND AND SYNC")
+        // 2. Audio mode
+        val audio = card(root, "2 · LISTEN TO THE VIDEO'S AUDIO (default)")
+        audio.addView(TextView(this).apply {
+            text = "Recognises the English speech from the video's sound. Works with any video, a few seconds delay."
+            textSize = 13f; setTextColor(0xFF5F6368.toInt())
+        })
+        modelBtn = button("", false) { downloadModel() }
+        audio.addView(modelBtn, gap())
+
+        // 3. Subtitle file mode
+        val subs = card(root, "3 · OR USE A SUBTITLE FILE (more accurate)")
+        subsInfo = TextView(this).apply {
+            textSize = 13f; setTextColor(0xFF5F6368.toInt())
+        }
+        subs.addView(subsInfo)
+        subsBtn = button("Choose .srt / .vtt file", false) { pickSubs.launch(arrayOf("*/*")) }
+        subs.addView(subsBtn, gap())
+        subsClearBtn = button("Remove the subtitle file", false) {
+            subsFile().delete(); prefs.edit().remove("subs_name").apply(); refreshState()
+        }
+        subs.addView(subsClearBtn, gap())
+        accessBtn = button("", false) { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+        subs.addView(accessBtn, gap())
+
+        // Mix + sync
+        val mix = card(root, "SOUND AND SYNC")
         val duckLabel = TextView(this).apply { text = "Original video volume while dubbing: $duck%"; textSize = 14f }
         mix.addView(duckLabel)
         mix.addView(SeekBar(this).apply {
@@ -174,7 +237,7 @@ class MainActivity : ComponentActivity() {
             addView(root)
         })
         updateOffsetLabel(Bus.offsetMs.value)
-        handleShare(intent)
+        refreshState()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -182,19 +245,27 @@ class MainActivity : ComponentActivity() {
                     Bus.status.collect {
                         statusTv.text = it
                         progress.visibility =
-                            if (it.startsWith("Fetching") || it.startsWith("Preparing")) View.VISIBLE else View.GONE
+                            if (it.startsWith("Preparing") || it.startsWith("Loading")) View.VISIBLE else View.GONE
                     }
                 }
                 launch { Bus.original.collect { originalTv.text = it } }
                 launch { Bus.dubbed.collect { dubbedTv.text = it } }
-                launch {
-                    Bus.running.collect {
-                        startBtn.text = if (it) "Stop dubbing" else "Start dubbing"
-                    }
-                }
+                launch { Bus.running.collect { startBtn.text = if (it) "Stop dubbing" else "Start dubbing" } }
                 launch { Bus.offsetMs.collect { updateOffsetLabel(it) } }
             }
         }
+    }
+
+    private fun refreshState() {
+        val ready = ModelManager.isReady(this)
+        modelBtn.isEnabled = !ready
+        modelBtn.text = if (ready) "Speech model ready ✓" else "Download the speech model once (~40 MB)"
+        val has = hasSubs()
+        subsInfo.text = if (has) "Using: ${prefs.getString("subs_name", "subtitle file")}  — dubbing will follow the video position."
+        else "No file chosen. Get a .srt/.vtt for the video, then choose it here."
+        subsClearBtn.visibility = if (has) View.VISIBLE else View.GONE
+        accessBtn.visibility = if (has) View.VISIBLE else View.GONE
+        accessBtn.text = if (listenerEnabled()) "Notification access is ON ✓" else "Turn on Notification access (needed to follow the video)"
     }
 
     private fun changeOffset(delta: Long) {
@@ -203,7 +274,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateOffsetLabel(ms: Long) {
-        offsetTv.text = "Sync fine-tune: %+.1f s  (+ = dub speaks earlier)".format(ms / 1000.0)
+        offsetTv.text = "Sync fine-tune (subtitle file mode): %+.1f s".format(ms / 1000.0)
     }
 
     private fun openVoiceSettings() {
@@ -215,63 +286,55 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleShare(intent)
+    private fun downloadModel() {
+        modelBtn.isEnabled = false
+        lifecycleScope.launch {
+            try {
+                ModelManager.download(this@MainActivity) { p -> runOnUiThread { modelBtn.text = "Downloading… $p%" } }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+            refreshState()
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        accessBtn.text =
-            if (listenerEnabled()) "Notification access is ON ✓"
-            else "Turn on Notification access for Live Dub"
-    }
-
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && linkEt.text.isNullOrBlank()) {
-            // Convenience: if a YouTube link was just copied, fill it in.
-            val clip = (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip
-            val t = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
-            if (t != null && t.contains("youtu") && Captions.parseId(t) != null) linkEt.setText(t.trim())
-        }
+        refreshState()
     }
 
     private fun listenerEnabled() =
         NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
-
-    private fun handleShare(i: Intent?) {
-        if (i?.action == Intent.ACTION_SEND) {
-            i.getStringExtra(Intent.EXTRA_TEXT)?.let { linkEt.setText(it.trim()) }
-        }
-    }
 
     private fun onStartStop() {
         if (Bus.running.value) {
             startService(Intent(this, DubService::class.java).setAction(DubService.ACTION_STOP))
             return
         }
-        if (Captions.parseId(linkEt.text.toString()) == null) {
-            Toast.makeText(this, "Paste a YouTube link first", Toast.LENGTH_SHORT).show()
-            return
+        if (hasSubs()) {
+            if (!listenerEnabled()) {
+                Toast.makeText(this, "Turn on Notification access for Live Dub, then come back", Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                return
+            }
+            if (Build.VERSION.SDK_INT >= 33) subsPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            else startDub(Intent(this, DubService::class.java).putExtra("mode", "subs"))
+        } else {
+            if (!ModelManager.isReady(this)) {
+                Toast.makeText(this, "Download the speech model first", Toast.LENGTH_SHORT).show()
+                return
+            }
+            val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
+            audioPermLauncher.launch(perms.toTypedArray())
         }
-        if (!listenerEnabled()) {
-            Toast.makeText(this, "Turn on Notification access for Live Dub, then come back", Toast.LENGTH_LONG).show()
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-            return
-        }
-        if (Build.VERSION.SDK_INT >= 33) notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        else startDubbing()
     }
 
-    private fun startDubbing() {
-        val id = Captions.parseId(linkEt.text.toString()) ?: return
+    private fun startDub(i: Intent) {
         Bus.original.value = ""
         Bus.dubbed.value = ""
-        val i = Intent(this, DubService::class.java)
-            .putExtra("video", id)
-            .putExtra("lang", languages[langIndex].second)
-            .putExtra("duck", duck)
-        ContextCompat.startForegroundService(this, i)
+        ContextCompat.startForegroundService(
+            this, i.putExtra("lang", languages[langIndex].second).putExtra("duck", duck)
+        )
     }
 }

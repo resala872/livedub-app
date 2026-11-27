@@ -21,12 +21,6 @@ jobs:
           gradle-version: 8.9
       - name: Unit tests
         run: gradle testDebugUnitTest --stacktrace 2>&1 | tee /tmp/unit.txt
-      - name: Live YouTube caption test
-        continue-on-error: true
-        env:
-          LIVE_TEST: "1"
-          REPORT_FILE: /tmp/live_report.txt
-        run: gradle testDebugUnitTest --tests '*LiveCaptionsTest' --rerun-tasks 2>&1 | tail -30 | tee /tmp/live.txt
       - name: Build APK
         run: gradle assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
@@ -38,8 +32,7 @@ jobs:
         run: |
           mkdir /tmp/out
           cp app/build/outputs/apk/debug/app-debug.apk /tmp/out/LiveDub.apk || true
-          cp /tmp/live_report.txt /tmp/live.txt /tmp/out/ || true
-          grep -E "tests completed|BUILD|FAILED|PASSED" /tmp/unit.txt > /tmp/out/unit_summary.txt || true
+                    grep -E "tests completed|BUILD|FAILED|PASSED" /tmp/unit.txt > /tmp/out/unit_summary.txt || true
           find app/build/test-results -name '*.xml' -exec cp {} /tmp/out/ \; || true
           cd /tmp/out && git init -q -b apk && git add -A
           git -c user.name=ci -c user.email=ci@example.com commit -qm "build output"

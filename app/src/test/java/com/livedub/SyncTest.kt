@@ -6,12 +6,12 @@ import org.junit.Test
 
 class SyncTest {
     private val cues = listOf(
-        Captions.Cue(1000, 3000, "A"),
-        Captions.Cue(3200, 5000, "B"),
-        Captions.Cue(9000, 10000, "C")
+        Cue(1000, 3000, "A"),
+        Cue(3200, 5000, "B"),
+        Cue(9000, 10000, "C")
     )
 
-    private class Rig(cues: List<Captions.Cue>, ready: (Int) -> String? = { "t$it" }) {
+    private class Rig(cues: List<Cue>, ready: (Int) -> String? = { "t$it" }) {
         val spoken = mutableListOf<Int>()
         var stops = 0
         val s = DubScheduler(cues, ready, { i, _ -> spoken.add(i) }, { stops++ })

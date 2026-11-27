@@ -6,7 +6,7 @@ object Sync {
     const val LATE_MS = 1500L   // skip a sentence if we are this late
     private const val CHARS_PER_SEC = 13.0 // rough speaking speed of Arabic TTS at normal rate
 
-    fun firstAfter(cues: List<Captions.Cue>, pos: Long): Int {
+    fun firstAfter(cues: List<Cue>, pos: Long): Int {
         val i = cues.indexOfFirst { it.end > pos }
         return if (i < 0) cues.size else i
     }
@@ -18,7 +18,7 @@ object Sync {
         (textLength / CHARS_PER_SEC * 1000.0 / slotMs).toFloat().coerceIn(1.0f, 1.8f)
 
     /** Time available to speak cue [i]: until the next cue starts (at most 1.5 s past its own end). */
-    fun slotMs(cues: List<Captions.Cue>, i: Int): Long {
+    fun slotMs(cues: List<Cue>, i: Int): Long {
         val cue = cues[i]
         val nextStart = cues.getOrNull(i + 1)?.start ?: (cue.end + 2000)
         return maxOf(1200L, minOf(nextStart, cue.end + 1500) - cue.start)
@@ -30,7 +30,7 @@ object Sync {
  * Handles pause, resume, seek and sentences whose translation is not ready yet.
  */
 class DubScheduler(
-    private val cues: List<Captions.Cue>,
+    private val cues: List<Cue>,
     private val text: (Int) -> String?,          // null = translation not ready yet, "" = skip
     private val speak: (Int, Long) -> Unit,      // cue index, time slot in ms
     private val stop: () -> Unit
