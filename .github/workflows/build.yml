@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -22,3 +24,9 @@ jobs:
         with:
           name: LiveDub-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish APK to the apk branch
+        run: |
+          mkdir /tmp/out && cp app/build/outputs/apk/debug/app-debug.apk /tmp/out/LiveDub.apk
+          cd /tmp/out && git init -q -b apk && git add LiveDub.apk
+          git -c user.name=ci -c user.email=ci@example.com commit -qm "LiveDub APK"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" apk
