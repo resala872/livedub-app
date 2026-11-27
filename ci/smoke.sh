@@ -13,9 +13,9 @@ adb pull /sdcard/ui.xml smoke_out/ui.xml >/dev/null 2>&1
 # SUBS mode end-to-end up to the point where a video must play
 cat ci/test.srt | adb shell "run-as com.livedub sh -c 'cat > files/subs.txt'"
 adb shell cmd notification allow_listener com.livedub/com.livedub.MediaWatcher | tee smoke_out/listener.txt
-adb shell am start-foreground-service -n com.livedub/.DubService --es mode subs --es lang fr --ei duck 20 | tee smoke_out/service.txt
+adb shell am start -W -n com.livedub/.MainActivity --es ci_start subs --es ci_lang fr | tee smoke_out/service.txt
 sleep 75
 adb exec-out screencap -p > smoke_out/2_running.png
-adb logcat -d -s LiveDub:I AndroidRuntime:E ActivityManager:E > smoke_out/log.txt
+adb logcat -d | grep -iE 'LiveDub|livedub|AndroidRuntime|FATAL|ForegroundService' | head -80 > smoke_out/log.txt
 adb shell dumpsys activity services com.livedub > smoke_out/services.txt 2>&1
 echo done

@@ -238,6 +238,7 @@ class MainActivity : ComponentActivity() {
         })
         updateOffsetLabel(Bus.offsetMs.value)
         refreshState()
+        handleCiStart(intent)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -254,6 +255,21 @@ class MainActivity : ComponentActivity() {
                 launch { Bus.offsetMs.collect { updateOffsetLabel(it) } }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleCiStart(intent)
+    }
+
+    /** Test hook used by the automated emulator test: `--es ci_start subs --es ci_lang fr`. */
+    private fun handleCiStart(i: Intent?) {
+        if (i?.getStringExtra("ci_start") != "subs") return
+        i.getStringExtra("ci_lang")?.let { code ->
+            val idx = languages.indexOfFirst { it.second == code }
+            if (idx >= 0) langIndex = idx
+        }
+        startDub(Intent(this, DubService::class.java).putExtra("mode", "subs"))
     }
 
     private fun refreshState() {
