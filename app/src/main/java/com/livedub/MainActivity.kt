@@ -2,15 +2,14 @@ package com.livedub
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
-import android.view.Gravity
+import android.provider.Settings
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -19,6 +18,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -33,35 +33,18 @@ class MainActivity : ComponentActivity() {
         "Indonesian" to "id", "Portuguese" to "pt"
     )
     private var langIndex = 0
-    private var duck = 40
+    private var duck = 20
 
+    private lateinit var linkEt: EditText
     private lateinit var statusTv: TextView
     private lateinit var originalTv: TextView
     private lateinit var dubbedTv: TextView
     private lateinit var startBtn: Button
-    private lateinit var modelBtn: Button
+    private lateinit var accessBtn: Button
+    private lateinit var offsetTv: TextView
 
-    private val projectionLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-            val data = r.data
-            if (r.resultCode == RESULT_OK && data != null) {
-                val i = Intent(this, DubService::class.java)
-                    .putExtra("code", r.resultCode)
-                    .putExtra("data", data)
-                    .putExtra("lang", languages[langIndex].second)
-                    .putExtra("duck", duck)
-                ContextCompat.startForegroundService(this, i)
-            }
-        }
-
-    private val permLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { m ->
-            if (m[Manifest.permission.RECORD_AUDIO] == true ||
-                ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-            ) launchProjection()
-            else Toast.makeText(this, "Microphone permission is required to capture audio", Toast.LENGTH_LONG).show()
-        }
+    private val notifPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { startDubbing() }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -76,12 +59,19 @@ class MainActivity : ComponentActivity() {
 
         root.addView(TextView(this).apply { text = "Live Dub"; textSize = 28f })
         root.addView(TextView(this).apply {
-            text = "Speaks a translated voice over any video playing on this phone (YouTube, Morphe, …). English audio in."
+            text = "Takes the video's subtitles, translates them and speaks them in sync with playback. " +
+                "In YouTube: Share > Live Dub, or paste the link below."
             textSize = 14f
         })
 
-        modelBtn = Button(this).apply { setOnClickListener { downloadModel() } }
-        root.addView(modelBtn)
+        root.addView(label("Video link"))
+        linkEt = EditText(this).apply { hint = "https://youtu.be/…"; setSingleLine() }
+        root.addView(linkEt)
+
+        accessBtn = Button(this).apply {
+            setOnClickListener { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+        }
+        root.addView(accessBtn)
 
         root.addView(label("Dub language"))
         root.addView(Spinner(this).apply {
@@ -105,47 +95,58 @@ class MainActivity : ComponentActivity() {
             })
         })
 
-        startBtn = Button(this).apply {
-            text = "Start dubbing"
-            setOnClickListener { onStartStop() }
-        }
+        offsetTv = label("Sync fine-tune: 0.0 s")
+        root.addView(offsetTv)
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(Button(this).apply {
+            text = "Dub later"; setOnClickListener { Bus.offsetMs.value -= 500 }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(Button(this).apply {
+            text = "Dub earlier"; setOnClickListener { Bus.offsetMs.value += 500 }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(row)
+
+        startBtn = Button(this).apply { text = "Start dubbing"; setOnClickListener { onStartStop() } }
         root.addView(startBtn, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
 
-        statusTv = TextView(this).apply { textSize = 14f; gravity = Gravity.START; setPadding(0, dp(16), 0, 0) }
+        statusTv = TextView(this).apply { textSize = 14f; setPadding(0, dp(16), 0, 0) }
         originalTv = TextView(this).apply { textSize = 16f; setPadding(0, dp(12), 0, 0) }
         dubbedTv = TextView(this).apply { textSize = 18f; setPadding(0, dp(8), 0, 0) }
         root.addView(statusTv); root.addView(originalTv); root.addView(dubbedTv)
 
         setContentView(ScrollView(this).apply { addView(root) })
-        refreshModelButton()
+        handleShare(intent)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { Bus.status.collect { statusTv.text = it } }
-                launch { Bus.original.collect { originalTv.text = if (it.isEmpty()) "" else "EN: $it" } }
+                launch { Bus.original.collect { originalTv.text = it } }
                 launch { Bus.dubbed.collect { dubbedTv.text = it } }
                 launch { Bus.running.collect { startBtn.text = if (it) "Stop dubbing" else "Start dubbing" } }
+                launch {
+                    Bus.offsetMs.collect { offsetTv.text = "Sync fine-tune: %.1f s".format(it / 1000.0) }
+                }
             }
         }
     }
 
-    private fun refreshModelButton() {
-        val ready = ModelManager.isReady(this)
-        modelBtn.isEnabled = !ready
-        modelBtn.text = if (ready) "Speech model ready ✓" else "Download speech model (~40 MB)"
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShare(intent)
     }
 
-    private fun downloadModel() {
-        modelBtn.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                ModelManager.download(this@MainActivity) { p ->
-                    runOnUiThread { modelBtn.text = "Downloading… $p%" }
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this@MainActivity, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-            refreshModelButton()
+    override fun onResume() {
+        super.onResume()
+        val on = listenerEnabled()
+        accessBtn.text = if (on) "Notification access: ON ✓" else "Step 1: enable Notification access for Live Dub"
+    }
+
+    private fun listenerEnabled() =
+        NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+
+    private fun handleShare(i: Intent?) {
+        if (i?.action == Intent.ACTION_SEND) {
+            i.getStringExtra(Intent.EXTRA_TEXT)?.let { linkEt.setText(it.trim()) }
         }
     }
 
@@ -154,17 +155,27 @@ class MainActivity : ComponentActivity() {
             startService(Intent(this, DubService::class.java).setAction(DubService.ACTION_STOP))
             return
         }
-        if (!ModelManager.isReady(this)) {
-            Toast.makeText(this, "Download the speech model first", Toast.LENGTH_SHORT).show()
+        if (Captions.parseId(linkEt.text.toString()) == null) {
+            Toast.makeText(this, "Paste a YouTube link first", Toast.LENGTH_SHORT).show()
             return
         }
-        val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
-        permLauncher.launch(perms.toTypedArray())
+        if (!listenerEnabled()) {
+            Toast.makeText(this, "Enable Notification access for Live Dub, then come back", Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33) notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else startDubbing()
     }
 
-    private fun launchProjection() {
-        val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        projectionLauncher.launch(mpm.createScreenCaptureIntent())
+    private fun startDubbing() {
+        val id = Captions.parseId(linkEt.text.toString()) ?: return
+        Bus.original.value = ""
+        Bus.dubbed.value = ""
+        val i = Intent(this, DubService::class.java)
+            .putExtra("video", id)
+            .putExtra("lang", languages[langIndex].second)
+            .putExtra("duck", duck)
+        ContextCompat.startForegroundService(this, i)
     }
 }

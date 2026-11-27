@@ -8,4 +8,6 @@ object Bus {
     val status = MutableStateFlow("Idle")
     val original = MutableStateFlow("")
     val dubbed = MutableStateFlow("")
+    /** Positive = dub speaks earlier, negative = later (milliseconds). */
+    val offsetMs = MutableStateFlow(0L)
 }

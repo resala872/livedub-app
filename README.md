@@ -1,21 +1,8 @@
 # Live Dub (Android 10+)
 
-Speaks a translated voice over whatever video is playing (YouTube, Morphe-patched YouTube, any app).
+Fetches a YouTube video's subtitles, translates them on-device, and speaks them (text-to-speech) in sync with the playing video.
 
-Pipeline: captured app audio -> Vosk offline speech recognition (English) -> ML Kit on-device translation -> Android text-to-speech.
+Use: 1) install the APK, 2) enable "Notification access" for Live Dub (lets it read the video's playback position),
+3) in YouTube/Morphe tap Share > Live Dub (or paste the link), 4) pick the language, Start dubbing, play the video.
 
-## Build the APK
-Option A - Android Studio: open this folder, wait for Gradle sync, then Build > Build APK(s).
-Option B - GitHub: push this folder to a new GitHub repo, open Actions > "Build APK" > Run workflow, download the APK artifact.
-
-## Use
-1. Install the APK (allow install from unknown sources).
-2. Open the app, tap "Download speech model" once.
-3. Pick the dub language. Install that language's voice in Android Settings > Text-to-speech if missing.
-4. Tap Start dubbing, accept the screen-capture prompt (only audio is captured), then play a video.
-
-## Limits
-- Source language is English only (swap the Vosk model in ModelManager.kt for other source languages).
-- Delay is a few seconds: recognition waits for a pause or ~14 words.
-- If the original audio is lowered, recognition may weaken: raise the slider.
-- Some apps block audio capture; if the video app opts out, nothing is recognised.
+Notes: uses an unofficial YouTube endpoint for subtitles, may break; only works for videos that have subtitles.
