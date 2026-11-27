@@ -9,6 +9,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioPlaybackCaptureConfiguration
@@ -74,6 +75,36 @@ class DubService : Service() {
     private lateinit var am: AudioManager
     private var originalMusicVolume = -1
 
+    // "Pause while dubbing": holding exclusive audio focus makes the video app pause itself,
+    // and it resumes when we let go. Works regardless of volume levels.
+    private var pauseVideo = true
+    private var focusReq: AudioFocusRequest? = null
+    private val main = Handler(Looper.getMainLooper())
+
+    @Synchronized private fun takeFocus() {
+        if (focusReq != null) return
+        val r = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+            )
+            .setOnAudioFocusChangeListener { }
+            .build()
+        if (am.requestAudioFocus(r) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focusReq = r
+    }
+
+    @Synchronized private fun dropFocus() {
+        focusReq?.let { am.abandonAudioFocusRequest(it) }
+        focusReq = null
+    }
+
+    private fun utteranceEnded() {
+        if (pending.updateAndGet { maxOf(0, it - 1) } == 0 && pauseVideo) {
+            main.postDelayed({ if (pending.get() == 0) dropFocus() }, 400)
+        }
+    }
+
     private fun status(s: String) {
         if (s != lastStatus) { lastStatus = s; Log.i("LiveDub", s) }
         Bus.status.value = s
@@ -93,6 +124,7 @@ class DubService : Service() {
         startForegroundCompat(audioMode)
         val lang = intent.getStringExtra("lang") ?: "ar"
         val duck = intent.getIntExtra("duck", 20)
+        pauseVideo = intent.getBooleanExtra("pause", true)
         am = getSystemService(AUDIO_SERVICE) as AudioManager
 
         if (audioMode) {
@@ -178,12 +210,10 @@ class DubService : Service() {
         )
         t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
-            override fun onDone(utteranceId: String?) { pending.updateAndGet { maxOf(0, it - 1) } }
+            override fun onDone(utteranceId: String?) { utteranceEnded() }
             @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) { pending.updateAndGet { maxOf(0, it - 1) } }
-            override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                pending.updateAndGet { maxOf(0, it - 1) }
-            }
+            override fun onError(utteranceId: String?) { utteranceEnded() }
+            override fun onStop(utteranceId: String?, interrupted: Boolean) { utteranceEnded() }
         })
         true
     }
@@ -192,6 +222,7 @@ class DubService : Service() {
         val t = tts ?: return
         if (pending.get() >= 3) { t.stop(); pending.set(0) } // far behind: drop the backlog
         pending.incrementAndGet()
+        if (pauseVideo) takeFocus()
         t.setSpeechRate(rate)
         t.speak(text, TextToSpeech.QUEUE_ADD, null, "u${System.nanoTime()}")
     }
@@ -316,7 +347,7 @@ class DubService : Service() {
                 Bus.dubbed.value = t
                 speak(t, Sync.rateFor(t.length, slot))
             },
-            stop = { tts?.stop(); pending.set(0) }
+            stop = { tts?.stop(); pending.set(0); dropFocus() }
         )
         var lastPos = 0L
         try {
@@ -368,6 +399,7 @@ class DubService : Service() {
             if (originalMusicVolume >= 0) am.setStreamVolume(AudioManager.STREAM_MUSIC, originalMusicVolume, 0)
         }
         scope.cancel()
+        dropFocus()
         tts?.stop()
         tts?.shutdown()
         projection?.stop()

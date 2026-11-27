@@ -20,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
+import android.widget.Switch
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
@@ -45,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("live_dub", MODE_PRIVATE) }
     private var langIndex = 0
     private var duck = 20
+    private var pauseVideo = true
 
     private lateinit var statusTv: TextView
     private lateinit var progress: ProgressBar
@@ -145,6 +147,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         langIndex = prefs.getInt("lang", 0).coerceIn(languages.indices)
         duck = prefs.getInt("duck", 20)
+        pauseVideo = prefs.getBoolean("pause", true)
         Bus.offsetMs.value = prefs.getLong("offset", 0L)
 
         val root = LinearLayout(this).apply {
@@ -199,6 +202,12 @@ class MainActivity : ComponentActivity() {
 
         // Mix + sync
         val mix = card(root, "SOUND AND SYNC")
+        mix.addView(Switch(this).apply {
+            text = "Pause the video while the dub speaks (stops the overlap)"
+            textSize = 14f
+            isChecked = pauseVideo
+            setOnCheckedChangeListener { _, on -> pauseVideo = on; prefs.edit().putBoolean("pause", on).apply() }
+        })
         val duckLabel = TextView(this).apply { text = "Original video volume while dubbing: $duck%"; textSize = 14f }
         mix.addView(duckLabel)
         mix.addView(SeekBar(this).apply {
@@ -350,7 +359,7 @@ class MainActivity : ComponentActivity() {
         Bus.original.value = ""
         Bus.dubbed.value = ""
         ContextCompat.startForegroundService(
-            this, i.putExtra("lang", languages[langIndex].second).putExtra("duck", duck)
+            this, i.putExtra("lang", languages[langIndex].second).putExtra("duck", duck).putExtra("pause", pauseVideo)
         )
     }
 }
