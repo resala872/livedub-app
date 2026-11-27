@@ -1,0 +1,7 @@
+Starting: Intent { cmp=com.livedub/.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: com.livedub/.MainActivity
+TotalTime: 2819
+WaitTime: 2830
+Complete
