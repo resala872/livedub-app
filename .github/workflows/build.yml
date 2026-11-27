@@ -1,4 +1,4 @@
-name: Build APK
+name: Build and test
 on:
   workflow_dispatch:
   push:
@@ -19,14 +19,56 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
-      - run: gradle assembleDebug --stacktrace
+      - name: Unit tests
+        run: gradle testDebugUnitTest --stacktrace 2>&1 | tee /tmp/unit.txt
+      - name: Live YouTube caption test
+        continue-on-error: true
+        env:
+          LIVE_TEST: "1"
+          REPORT_FILE: /tmp/live_report.txt
+        run: gradle testDebugUnitTest --tests '*LiveCaptionsTest' --rerun-tasks 2>&1 | tail -30 | tee /tmp/live.txt
+      - name: Build APK
+        run: gradle assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: LiveDub-debug-apk
+          name: apk
           path: app/build/outputs/apk/debug/app-debug.apk
-      - name: Publish APK to the apk branch
+      - name: Publish APK and reports to the apk branch
+        if: always()
         run: |
-          mkdir /tmp/out && cp app/build/outputs/apk/debug/app-debug.apk /tmp/out/LiveDub.apk
-          cd /tmp/out && git init -q -b apk && git add LiveDub.apk
-          git -c user.name=ci -c user.email=ci@example.com commit -qm "LiveDub APK"
+          mkdir /tmp/out
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/out/LiveDub.apk || true
+          cp /tmp/live_report.txt /tmp/live.txt /tmp/out/ || true
+          grep -E "tests completed|BUILD|FAILED|PASSED" /tmp/unit.txt > /tmp/out/unit_summary.txt || true
+          find app/build/test-results -name '*.xml' -exec cp {} /tmp/out/ \; || true
+          cd /tmp/out && git init -q -b apk && git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm "build output"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" apk
+  smoke:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: app/build/outputs/apk/debug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        continue-on-error: true
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: bash ci/smoke.sh
+      - name: Publish smoke results
+        if: always()
+        run: |
+          mkdir -p smoke_out && cd smoke_out && git init -q -b smoke && git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm "smoke results"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" smoke

@@ -7,7 +7,7 @@ import java.net.URL
 /** Fetches the subtitle track of a YouTube video (unofficial InnerTube endpoint; may change). */
 object Captions {
     data class Cue(val start: Long, val end: Long, val text: String)
-    data class Result(val lang: String, val cues: List<Cue>)
+    data class Result(val lang: String, val cues: List<Cue>, val durationMs: Long, val via: String)
 
     private class Client(val name: String, val version: String, val ua: String, val extra: String)
 
@@ -61,10 +61,11 @@ object Captions {
         if (json.isBlank()) return null
         val cues = parse(json)
         if (cues.isEmpty()) return null
-        return Result(track.optString("languageCode", "en"), cues)
+        val dur = JSONObject(resp).optJSONObject("videoDetails")?.optString("lengthSeconds")?.toLongOrNull()?.times(1000) ?: 0L
+        return Result(track.optString("languageCode", "en"), cues, dur, c.name)
     }
 
-    private fun parse(json: String): List<Cue> {
+    fun parse(json: String): List<Cue> {
         val events = JSONObject(json).optJSONArray("events") ?: return emptyList()
         val raw = mutableListOf<Cue>()
         for (k in 0 until events.length()) {
@@ -72,7 +73,7 @@ object Captions {
             val segs = e.optJSONArray("segs") ?: continue
             val text = buildString {
                 for (j in 0 until segs.length()) append(segs.getJSONObject(j).optString("utf8"))
-            }.replace("\n", " ").replace(Regex("\\s+"), " ").trim()
+            }.replace("\n", " ").replace(">>", " ").replace(Regex("\\s+"), " ").trim()
             if (text.isEmpty() || Regex("""\[[^\]]*]""").matches(text)) continue
             val start = e.optLong("tStartMs")
             raw.add(Cue(start, start + e.optLong("dDurationMs", 2000), text))
