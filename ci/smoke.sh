@@ -15,7 +15,10 @@ cat ci/test.srt | adb shell "run-as com.livedub sh -c 'cat > files/subs.txt'"
 adb shell cmd notification allow_listener com.livedub/com.livedub.MediaWatcher | tee smoke_out/listener.txt
 adb shell am start -W -n com.livedub/.MainActivity --es ci_start subs --es ci_lang fr | tee smoke_out/service.txt
 sleep 75
+adb shell input swipe 500 1600 500 300 300
+sleep 1
 adb exec-out screencap -p > smoke_out/2_running.png
-adb logcat -d | grep -iE 'LiveDub|livedub|AndroidRuntime|FATAL|ForegroundService' | head -80 > smoke_out/log.txt
+adb logcat -d -s LiveDub:I AndroidRuntime:E > smoke_out/log.txt
+adb logcat -d | grep -iE 'FATAL|ForegroundServiceStartNotAllowed|Process: com.livedub' | head -20 > smoke_out/log_errors.txt
 adb shell dumpsys activity services com.livedub > smoke_out/services.txt 2>&1
 echo done
