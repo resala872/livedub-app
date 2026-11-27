@@ -28,4 +28,9 @@ class SubtitleParserTest {
         assertEquals(0, SubtitleParser.parse("hello world").size)
         assertEquals(0, SubtitleParser.parse("").size)
     }
+
+    @Test fun stripsStyleTags() {
+        val c = SubtitleParser.parse("1\n00:00:01,000 --> 00:00:02,000\n{\\an8}<b>Top text.</b>\n")
+        assertEquals("Top text.", c[0].text)
+    }
 }

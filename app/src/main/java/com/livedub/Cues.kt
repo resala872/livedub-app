@@ -25,7 +25,7 @@ object SubtitleParser {
             val times = TIME.findAll(lines[ti]).toList()
             if (times.size < 2) continue
             val text = lines.drop(ti + 1).joinToString(" ")
-                .replace(Regex("<[^>]+>"), "").replace(Regex("\\{\\\\[^}]*}"), "")
+                .replace(Regex("<[^>]+>"), "").replace(Regex("\\{\\\\[^}]*\\}"), "")
                 .replace(Regex("\\s+"), " ").trim()
             if (text.isEmpty()) continue
             cues.add(Cue(ms(times[0]), ms(times[1]), text))
