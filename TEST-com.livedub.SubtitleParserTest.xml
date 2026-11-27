@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.livedub.SubtitleParserTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-27T10:15:02" hostname="ip-10-0-137-62" time="0.035">
+  <properties/>
+  <testcase name="parsesVtt" classname="com.livedub.SubtitleParserTest" time="0.026"/>
+  <testcase name="stripsStyleTags" classname="com.livedub.SubtitleParserTest" time="0.001"/>
+  <testcase name="parsesSrtAndMergesFragments" classname="com.livedub.SubtitleParserTest" time="0.007"/>
+  <testcase name="garbageGivesNoCues" classname="com.livedub.SubtitleParserTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
